@@ -1,11 +1,5 @@
 #import "AppDelegate.h"
-#import "AppPrefsWindowController.h"
-#import "CanvasWindowController.h"
-#import "RulesList.h"
-#import "utils.h"
-#import "NSBundle+LoginItem.h"
-#import "BlackWhiteFilter.h"
-#import "GestureCompare.h"
+
 
 @implementation AppDelegate
 
@@ -18,11 +12,16 @@ static BOOL isEnabled;
 static AppPrefsWindowController *_preferencesWindowController;
 static NSTimeInterval lastMouseWheelEventTime;
 
-static NSMutableArray *GestureB;
+static NSMutableArray *gestureB;
 static NSInteger actionRuleIndex;
 
 static NSInteger settingRuleIndex;
 
+static RightClickMenu *rightClickMenu;
+static HistoryClipboard * historyClipboard;
+
+
+static HistoryClipoardListWindowController *historyClipoardListWindowController;
 
 + (AppDelegate *)appDelegate {
     return (AppDelegate *) [[NSApplication sharedApplication] delegate];
@@ -40,29 +39,56 @@ static NSInteger settingRuleIndex;
         });
         return ;
     }
-    
+    [self initAppAtFirstLaunch];
     windowController = [[CanvasWindowController alloc] init];
-
+    
     CGEventMask eventMask = CGEventMaskBit(kCGEventRightMouseDown) | CGEventMaskBit(kCGEventRightMouseDragged) | CGEventMaskBit(kCGEventRightMouseUp) | CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventScrollWheel);
     mouseEventTap = CGEventTapCreate(kCGHIDEventTap, kCGHeadInsertEventTap, kCGEventTapOptionDefault, eventMask, mouseEventCallback, NULL);
-    CFRunLoopSourceRef runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, mouseEventTap, 0);
-    CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, kCFRunLoopCommonModes);
-    CFRelease(mouseEventTap);
-    CFRelease(runLoopSource);
+    
 
+    
+    const void * keys[] = { kAXTrustedCheckOptionPrompt };
+    const void * values[] = { kCFBooleanTrue };
+    
+    CFDictionaryRef options = CFDictionaryCreate(
+                                                  kCFAllocatorDefault,
+                                                 keys,
+                                                 values,
+                                                 sizeof(keys) / sizeof(*keys),
+                                                 &kCFCopyStringDictionaryKeyCallBacks,
+                                                 &kCFTypeDictionaryValueCallBacks);
+    
+    BOOL accessibilityEnabled = AXIsProcessTrustedWithOptions(options);
+    
+    if (accessibilityEnabled) {
+        CFRunLoopSourceRef runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, mouseEventTap, 0);
+        CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, kCFRunLoopCommonModes);
+        CFRelease(mouseEventTap);
+        CFRelease(runLoopSource);
+        
+        
+        
+    } else {
+        NSAlert *alert = [[NSAlert alloc] init];
+        [alert setAlertStyle:NSInformationalAlertStyle];
+        [alert setMessageText:NSLocalizedString(@"On macOS Mojave(10.14) and later, you must manually enable Accessibility permission for MacStroke to work.\n Please goto System Preferences -> Security & Privacy -> Privacy -> Accessibility to enable it for MacStroke.\nIf is is already enabled but MacStroke is still not working, please re-open MacStroke.", nil)];
+        
+        [alert runModal];
+        
+    }
+    
     direction = [NSMutableString string];
-
-    GestureB = [[NSMutableArray alloc] init];
+    
+    gestureB = [[NSMutableArray alloc] init];
     isEnabled = YES;
     
     NSURL *defaultPrefsFile = [[NSBundle mainBundle]
                                URLForResource:@"DefaultPreferences" withExtension:@"plist"];
-    NSDictionary *defaultPrefs =
-        [NSDictionary dictionaryWithContentsOfURL:defaultPrefsFile];
+    NSDictionary *defaultPrefs = [NSDictionary dictionaryWithContentsOfURL:defaultPrefsFile];
     [[NSUserDefaults standardUserDefaults] registerDefaults:defaultPrefs];
-
+    
     [BWFilter compatibleProcedureWithPreviousVersionBlockRules];
-
+    
     if ([[NSUserDefaults standardUserDefaults] boolForKey:@"openPrefOnStartup"]) {
         [self openPreferences:self];
     }
@@ -76,6 +102,13 @@ static NSInteger settingRuleIndex;
     
     lastMouseWheelEventTime = 0;
     settingRuleIndex=-1;
+    
+    //init Right Click Menu
+    [self initRightClickMenu];
+    
+    //init History Clipboard
+    [self initHistoryClipboard];
+    
 }
 
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)theApplication hasVisibleWindows:(BOOL)flag
@@ -116,7 +149,7 @@ static NSInteger settingRuleIndex;
         _preferencesWindowController = [[AppPrefsWindowController alloc] initWithWindowNibName:@"Preferences"];
         [_preferencesWindowController showWindow:self];
     } else {
-       [[_preferencesWindowController window] orderFront:self];
+        [[_preferencesWindowController window] orderFront:self];
     }
 }
 
@@ -148,68 +181,66 @@ static NSInteger settingRuleIndex;
 
 static void setGestureB(NSEvent *event){
     NSPoint newLocation = event.locationInWindow;
-    [GestureB addObject:[NSValue valueWithPoint:newLocation]];
+    [gestureB addObject:[NSValue valueWithPoint:newLocation]];
 }
 
 static void setActionIndex(){
-    
     RulesList *rulesList = [RulesList sharedRulesList];
-   
+    
     NSInteger count = [rulesList count];
     //NSLog(@"%ld",(long)count);
     NSArray *ruleListArr=[NSKeyedUnarchiver unarchiveObjectWithData:[rulesList nsData]];
     //NSLog(@"%@",ruleListArr);
-    int tmp_Index=-1;
+    int tmpIndex=-1;
     double tmp_score = 0.0;
     double minscore =[[NSUserDefaults standardUserDefaults] doubleForKey:@"minScore"];
     bool enableGestureMinScore=[[NSUserDefaults standardUserDefaults] boolForKey:@"enableGestureMinScore"];
     NSString *frontApp = frontBundleName();
     for (int i=0; i<count; i++) {
         if([rulesList matchFilter:frontApp atIndex:i]/*||[rulesList triggerOnEveryMatchAtIndex:i]*/){
-        //}
-        NSArray *Ruledata=[[ruleListArr objectAtIndex:i] objectForKey:@"data"];
-        if(Ruledata!=nil){
-            NSMutableArray *GestureA = [[NSMutableArray alloc] initWithArray:Ruledata];
-            double score = [GestureCompare compareByGestureA:GestureA GestureB:GestureB];
-            //NSLog(@"%d:%f",i,score);
-            if(enableGestureMinScore){
-                if(score>0 && score>tmp_score && score >minscore){
-                    tmp_Index=i;
-                    tmp_score=score;
-                }
-            }else {
-                if(score>0 && score>tmp_score){
-                    tmp_Index=i;
-                    tmp_score=score;
+            //}
+            NSArray *Ruledata=[[ruleListArr objectAtIndex:i] objectForKey:@"data"];
+            if(Ruledata!=nil){
+                NSMutableArray *gestureA = [[NSMutableArray alloc] initWithArray:Ruledata];
+                double score = [GestureCompare compareByGestureA:gestureA GestureB:gestureB];
+                //NSLog(@"%d:%f",i,score);
+                if(enableGestureMinScore){
+                    if(score>0 && score>tmp_score && score >minscore){
+                        tmpIndex=i;
+                        tmp_score=score;
+                    }
+                }else {
+                    if(score>0 && score>tmp_score){
+                        tmpIndex=i;
+                        tmp_score=score;
+                    }
+                    
                 }
                 
             }
-            
-        }
         }
         
     }
-    actionRuleIndex=tmp_Index;
+    actionRuleIndex=tmpIndex;
     [windowController writeActionRuleIndex:actionRuleIndex];
 }
 
 void resetGestureB() {
-    [GestureB removeAllObjects];
+    [gestureB removeAllObjects];
     actionRuleIndex =-1;
 }
 bool setRuleData(){
-    
     if(settingRuleIndex>-1){
-        [[RulesList sharedRulesList] setGestureData:GestureB atIndex:settingRuleIndex];
+        [[RulesList sharedRulesList] setGestureData:gestureB atIndex:settingRuleIndex];
         NSUserNotification *notification = [[NSUserNotification alloc] init];
         notification.title = @"MacStroke";
         notification.informativeText = NSLocalizedString(@"Gesture draw complete!", nil);
-        notification.soundName = NSUserNotificationDefaultSoundName;        
+        notification.soundName = NSUserNotificationDefaultSoundName;
         [[NSUserNotificationCenter defaultUserNotificationCenter] deliverNotification:notification];
         [_preferencesWindowController.rulesTableView reloadData];
         
         settingRuleIndex = -1;
-
+        
         NSString *appname =frontBundleName();
         if ([appname isEqualToString:@"net.mtjo.MacStroke"]) {
             [RulesList pressKeyWithFlags:kVK_Return virtualKey:kVK_Return];
@@ -240,7 +271,6 @@ static CGEventRef mouseEventCallback(CGEventTapProxy proxy, CGEventType type, CG
     if (!isEnabled) {
         return event;
     }
-    
     NSEvent *mouseEvent;
     switch (type) {
         case kCGEventRightMouseDown:
@@ -251,20 +281,21 @@ static CGEventRef mouseEventCallback(CGEventTapProxy proxy, CGEventType type, CG
             {
                 NSString *frontBundle = frontBundleName();
                 if (![BWFilter shouldHookMouseEventForApp:frontBundle] || !([[NSUserDefaults standardUserDefaults] boolForKey:@"showUIInWhateverApp"] || [[RulesList sharedRulesList] appSuitedRule:frontBundle])) {
-                //        CGEventPost(kCGSessionEventTap, mouseDownEvent);
-                //        if (mouseDraggedEvent) {
-                //            CGEventPost(kCGSessionEventTap, mouseDraggedEvent);
-                //        }
+                    //        CGEventPost(kCGSessionEventTap, mouseDownEvent);
+                    //        if (mouseDraggedEvent) {
+                    //            CGEventPost(kCGSessionEventTap, mouseDraggedEvent);
+                    //        }
                     shouldShow = NO;
                     return event;
                 }
+                
                 shouldShow = YES;
             }
             
             if (mouseDownEvent) { // mouseDownEvent may not release when kCGEventTapDisabledByTimeout
                 //resetDirection();
                 resetGestureB();
-
+                
                 CGPoint location = CGEventGetLocation(mouseDownEvent);
                 CGEventPost(kCGSessionEventTap, mouseDownEvent);
                 CFRelease(mouseDownEvent);
@@ -281,10 +312,11 @@ static CGEventRef mouseEventCallback(CGEventTapProxy proxy, CGEventType type, CG
             mouseEvent = [NSEvent eventWithCGEvent:event];
             mouseDownEvent = event;
             CFRetain(mouseDownEvent);
-
+            
             [windowController reinitWindow];
             [windowController handleMouseEvent:mouseEvent];
             lastLocation = mouseEvent.locationInWindow;
+            
             break;
         case kCGEventRightMouseDragged:
             if (!shouldShow){
@@ -337,24 +369,26 @@ static CGEventRef mouseEventCallback(CGEventTapProxy proxy, CGEventType type, CG
             if (!shouldShow){
                 return event;
             }
-            
             if (mouseDownEvent) {
                 mouseEvent = [NSEvent eventWithCGEvent:event];
                 [windowController handleMouseEvent:mouseEvent];
                 setGestureB(mouseEvent);
                 if (!handleGesture(true)) {
-                    CGEventPost(kCGSessionEventTap, mouseDownEvent);
-                    //if (mouseDraggedEvent) {
-                    //    CGEventPost(kCGSessionEventTap, mouseDraggedEvent);
-                    //}
-                    CGEventPost(kCGSessionEventTap, event);
+                    NSString *appname =frontBundleName();
+                    if ([[RightClicksList sharedRightClicksList] needRightClickByAppname:appname]  &&!mouseDraggedEvent) {
+                        CGPoint p = CGEventGetLocation(mouseDownEvent);
+                        [windowController threadRightClick:p];
+                    }else{
+                        CGEventPost(kCGSessionEventTap, mouseDownEvent);
+                        //if (mouseDraggedEvent) {
+                        //    CGEventPost(kCGSessionEventTap, mouseDraggedEvent);
+                        //}
+                        CGEventPost(kCGSessionEventTap, event);
+                    }
                 }else {
-                    double noteRetetionTime = [[NSUserDefaults standardUserDefaults] doubleForKey:@"noteRetetionTime"];
-                    //NSLog(@"%f",noteRetetionTime);
-                    [NSTimer scheduledTimerWithTimeInterval:noteRetetionTime target:windowController selector:@selector(reinitWindow) userInfo:nil repeats:NO];
+                    [windowController reinitWindow];
                 }
-                CFRelease(mouseDownEvent);
-            }
+                CFRelease(mouseDownEvent);            }
             
             if (mouseDraggedEvent) {
                 CFRelease(mouseDraggedEvent);
@@ -363,7 +397,6 @@ static CGEventRef mouseEventCallback(CGEventTapProxy proxy, CGEventType type, CG
             mouseDownEvent = mouseDraggedEvent = NULL;
             shouldShow = NO;
             
-            //resetDirection();
             resetGestureB();
             break;
         }
@@ -371,12 +404,13 @@ static CGEventRef mouseEventCallback(CGEventTapProxy proxy, CGEventType type, CG
             if (!shouldShow || !mouseDownEvent) {
                 return event;
             }
+            
             double delta = CGEventGetDoubleValueField(event, kCGScrollWheelEventDeltaAxis1);
-
+            
             NSTimeInterval current = [NSDate timeIntervalSinceReferenceDate];
             if (current - lastMouseWheelEventTime > 0.3) {
                 if (delta > 0) {
-                    // NSLog(@"Down!");
+                    //NSLog(@"Down!");
                     //addDirection('d', true);
                     
                 } else if (delta < 0){
@@ -402,9 +436,11 @@ static CGEventRef mouseEventCallback(CGEventTapProxy proxy, CGEventType type, CG
         default:
             return event;
     }
-
+    
     return NULL;
 }
+
+
 
 -(void) setSettingRuleIndex:(NSInteger)index;
 {
@@ -413,6 +449,95 @@ static CGEventRef mouseEventCallback(CGEventTapProxy proxy, CGEventType type, CG
 - (NSInteger) getSettingRuleIndex;
 {
     return settingRuleIndex;
+}
+
+-(void) initAppAtFirstLaunch;
+{
+    // 判断是不是第一次启动APP
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"firstLaunch"]) {
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"firstLaunch"];
+        [[RulesList sharedRulesList] reInit];
+        [[RightClicksList sharedRightClicksList] reInit];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+        //载入预设值
+        NSUserDefaults * defs = [NSUserDefaults standardUserDefaults];
+        NSURL *defaultPrefsFile = [[NSBundle mainBundle]
+                                   URLForResource:@"DefaultPreferences" withExtension:@"plist"];
+        NSDictionary *defaultPrefs =
+        [NSDictionary dictionaryWithContentsOfURL:defaultPrefsFile];
+        for (NSString *key in defaultPrefs) {
+            [defs setObject:[defaultPrefs objectForKey:key] forKey:key];
+        }
+        [defs synchronize];
+        [MGOptionsDefine resetColors];
+                
+    }
+}
+
+
+-(void) initRightClickMenu;
+{
+    rightClickMenu = [[RightClickMenu alloc] init];
+    [rightClickMenu delayedEnableFinderExtension];
+    [rightClickMenu initFinderSyncExtension];
+}
+
+
+-(void) initHistoryClipboard
+{
+    
+    NSUserDefaultsController *defaults = NSUserDefaultsController.sharedUserDefaultsController;
+    NSString *keyPath = @"values.historyCilpboardListShortcut";
+    NSDictionary *options = @{NSValueTransformerNameBindingOption: NSKeyedUnarchiveFromDataTransformerName};
+
+    SRShortcutAction *showHistoryCilpboardList = [SRShortcutAction shortcutActionWithKeyPath:keyPath
+                                                                                    ofObject:defaults
+                                                                               actionHandler:^BOOL(SRShortcutAction *anAction) {
+        if ([[AppDelegate appDelegate] isHistoryClipboardEnable] ) {
+            [self showHistoryCilpboardList:nil];
+        }
+        
+        return YES;
+    }];
+    [[SRGlobalShortcutMonitor sharedMonitor] addAction:showHistoryCilpboardList forKeyEvent:SRKeyEventTypeDown];
+    
+    SRRecorderControl *recorder = [SRRecorderControl new];
+    [recorder bind:NSValueBinding toObject:defaults withKeyPath:keyPath options:options];
+    
+    //recorder.objectValue = [SRShortcut shortcutWithKeyEquivalent:@"^⇧V"];
+    NSLog(@"historyCilpboardListShortcut:%@", [[NSUserDefaults standardUserDefaults] objectForKey:@"historyCilpboardListShortcut"]);
+    
+   
+
+    historyClipboard = [[HistoryClipboard alloc] init];
+    
+    [historyClipboard enableHistoryClipboard];
+
+}
+-(HistoryClipboard *) getHistoryClipboard{
+    return historyClipboard;
+}
+
+-(BOOL) isHistoryClipboardEnable{
+    return [historyClipboard isEnable];
+}
+
+- (IBAction)showHistoryCilpboardList:(id)sender {
+    //instantiate preferences window controller
+    if (!historyClipoardListWindowController) {
+        historyClipoardListWindowController = [[HistoryClipoardListWindowController alloc] initWithWindowNibName:@"HistoryClipoardListWindowController"];
+        [historyClipoardListWindowController showWindow:self];
+        [historyClipoardListWindowController.window center];
+        [historyClipoardListWindowController.window makeKeyWindow];
+        [historyClipoardListWindowController.window setLevel:21];
+    } else {
+        [historyClipoardListWindowController.window close];
+        historyClipoardListWindowController = [[HistoryClipoardListWindowController alloc] initWithWindowNibName:@"HistoryClipoardListWindowController"];
+        [historyClipoardListWindowController showWindow:self];
+        [historyClipoardListWindowController.window center];
+        [historyClipoardListWindowController.window makeKeyWindow];
+        [historyClipoardListWindowController.window setLevel:21];
+    }
 }
 
 @end

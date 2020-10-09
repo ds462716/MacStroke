@@ -15,25 +15,22 @@
 
 - (void)reinitWindow {
     NSRect frame = NSScreen.mainScreen.frame;
-    //NSLog(@"%@",NSScreen.screens.firstObject.frame);
-    //NSPoint mouseLoc;
-    //mouseLoc = [NSEvent mouseLocation]; //get current mouse position
-    //NSLog(@"Mouse location: %f %f", mouseLoc.x, mouseLoc.y);
     NSWindow *window = [[CanvasWindow alloc] initWithContentRect:frame];
     NSView *view = [[CanvasView alloc] initWithFrame:frame];
+    [viewList addObject:view];
     window.contentView = view;
     window.level = CGShieldingWindowLevel();
-
     window.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces;
     self.window = window;
     [window orderFront:self];
+    
 }
 
 - (id)init {
     self = [super init];
+    viewList = [[NSMutableArray alloc] init];
     if (self) {
         [self reinitWindow];
-
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(handleScreenParametersChange:) name:NSApplicationDidChangeScreenParametersNotification object:nil];
     }
     return self;
@@ -63,6 +60,9 @@
             break;
         case NSRightMouseUp:
             [self.window.contentView mouseUp:event];
+            //clear draw note after noteRetetionTime
+            double noteRetetionTime = [[NSUserDefaults standardUserDefaults] doubleForKey:@"noteRetetionTime"];
+            [NSTimer scheduledTimerWithTimeInterval:noteRetetionTime target:self selector:@selector(clearNote:) userInfo:viewList repeats:NO];
             break;
         default:
             break;
@@ -75,14 +75,65 @@
     [self.window.contentView resizeTo:frame];
 }
 
-//- (void)writeDirection:(NSString *)directionStr; {
-//    [self.window.contentView writeDirection:directionStr];
-//}
-
 - (void)writeActionRuleIndex:(NSInteger)actionRuleIndex; {
     [self.window.contentView writeActionRuleIndex:actionRuleIndex];
 }
 
+- (void)rightClick:(NSDictionary*) pointDic;{
+    double x =[[pointDic valueForKey:@"x"] doubleValue];
+    double y =[[pointDic valueForKey:@"y"] doubleValue];
+#ifdef DEBUG
+    NSLog(@"NSDictionary point:%@", pointDic);
+    NSLog(@"callRightMenu at x:%f y:%f", x,y);
+#endif
+    CGPoint point = CGPointMake(x, y);
+    //usleep(25000);
+    CGEventRef controlDown = CGEventCreateKeyboardEvent(NULL, 0x3B, true);
+    CGEventPost(kCGSessionEventTap, controlDown);
+    CFRelease(controlDown);
+    usleep(25000);// Improve reliability
+    
+    CGEventRef leftDown = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseDown,point, kCGMouseButtonLeft);
+    CGEventPost(kCGHIDEventTap, leftDown);
+    CFRelease(leftDown);
+    
+    usleep(15000); // Improve reliability
+    
+    // Left button up
+    CGEventRef leftUp = CGEventCreateMouseEvent(NULL, kCGEventLeftMouseUp, point, kCGMouseButtonLeft);
+    CGEventPost(kCGHIDEventTap, leftUp);
+    
+    CGEventRef controlUp  = CGEventCreateKeyboardEvent(NULL, 0x3B, false);
+    CGEventPost(kCGSessionEventTap, controlUp);
+    CFRelease(controlUp);
+    
+    CFRelease(leftUp);
+}
 
+- (void)threadRightClick:(CGPoint) point;{
+    NSThread * newThread = [[NSThread alloc]initWithTarget:self selector:@selector(rightClick:) object:@{@"x":@(point.x),@"y":@(point.y)}] ;
+    [newThread start];
+}
+
+- (void)clearNote:(NSTimer *)timer{
+#ifdef DEBUG
+    NSLog(@"%ld",[viewList count]);
+#endif
+    NSArray *_viewList = [[NSArray alloc] initWithArray: [timer userInfo]];
+    _viewList = [[_viewList reverseObjectEnumerator] allObjects];
+    if ([_viewList count]>0) {
+        for(int i = 0; i < [_viewList count]; i++){
+            if (i>5) {
+                break;
+            }
+#ifdef DEBUG
+            NSLog(@"%d",i );
+#endif
+            
+            [[_viewList objectAtIndex:i] removeFromSuperview];
+            [[_viewList objectAtIndex:i] releaseGState];
+        }
+    }
+}
 
 @end

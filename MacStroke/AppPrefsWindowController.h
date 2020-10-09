@@ -7,6 +7,7 @@
 #import "DBPrefsWindowController.h"
 #import "SRRecorderControl.h"
 #import "AppPickerWindowController.h"
+#import "HistoryClipoardListWindowController.h"
 #import <Sparkle/Sparkle.h>
 
 @class LaunchAtLoginController;
@@ -18,6 +19,9 @@
 @property(strong, nonatomic) IBOutlet NSView *appleScriptPreferenceView;
 @property(strong, nonatomic) IBOutlet NSView *aboutPreferenceView;
 @property(strong, nonatomic) IBOutlet NSView *filtersPrefrenceView;
+@property(strong, nonatomic) IBOutlet NSView *rightClickPrefrenceView;
+@property(strong, nonatomic) IBOutlet NSView *rightClickMenuPrefrenceView;
+@property(strong, nonatomic) IBOutlet NSView *clipboardPrefrenceView;
 
 @property(weak) IBOutlet NSTableView *rulesTableView;
 
@@ -42,13 +46,20 @@
 @property(weak) IBOutlet NSTextField *minScoreTextField;
 @property(weak) IBOutlet NSSlider *minScoreSlider;
 @property(weak) IBOutlet NSTableView *appleScriptTableView;
+
 @property(weak) IBOutlet NSTextField *appleScriptTextField;
+@property(weak) IBOutlet NSTableView *rightClickTableView;
 @property(weak) IBOutlet NSButton *showIconInStatusBarButton;
 @property(weak) IBOutlet NSComboBox *languageComboBox;
+@property(weak) IBOutlet NSButton *enableNewFileButton;
+@property (weak) IBOutlet NSButton *enableOpenInTerminalButton;
+@property (weak) IBOutlet NSButton *enablecopyFilePathButton;
 
 @property(weak) IBOutlet NSColorWell *lineColorWell;
 
 @property(assign) IBOutlet WebView *webView;
+
+@property(assign) IBOutlet NSView *keyboardShortcut;
 
 - (void)rulePickCallback:(NSString *)rulesStringSplitedByStick atIndex:(NSInteger)index;
 
@@ -56,4 +67,15 @@
 
 - (IBAction)onSetGestureData:(id)sender;
 
+- (void)rightClickPickCallback:(NSString *)appname atIndex:(NSInteger)index;
+
+- (IBAction)onToggleRightClickMenu:(id)sender;
+
+@property (weak) IBOutlet NSButton *useTerminalRadio;
+
+@property (weak) IBOutlet NSButton *useItermRadio;
+
+- (IBAction)onChangeTerminal:(id)sender;
+
+- (void)initCilpboardShotCut;
 @end
